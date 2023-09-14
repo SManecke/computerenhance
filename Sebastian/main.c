@@ -52,12 +52,35 @@ typedef enum {
     FORMAT_COUNT
 } InstructionFormat;
 
+typedef enum {
+    MOV,
+    ADD,
+    OR,
+    ADC,
+    SBB,
+    SUB,
+    AND,
+    XOR,
+    CMP,
+    OPERATION_COUNT
+} Operation;
+
+u32 extended_code[] = {
+    [ADD] = 0b000,
+    [OR]  = 0b001,
+    [ADC] = 0b010,
+    [SBB] = 0b011,
+    [SUB] = 0b100,
+    [AND] = 0b101,
+    [XOR] = 0b110,
+    [CMP] = 0b111
+};
+
 typedef struct {
     u32 opcode;
     BitPattern opcode_pattern;
     InstructionFormat format;
-    string_t string;
-    u32 ext_opcode;
+    Operation operation;
 } Opcode;
 
 BitPattern no_pattern = { 0, 0 };
@@ -75,22 +98,33 @@ const BitPattern pat_67 = { 6, 2 };
 const BitPattern pat_345 = { 3, 3 };
 const BitPattern pat_012 = { 0, 3 };
 
+char *(opname[]) = {
+    [MOV] = "mov",
+    [ADD] = "add",
+    [OR]  = "or",
+    [ADC] = "adc",
+    [SBB] = "sbb",
+    [SUB] = "sub",
+    [AND] = "and",
+    [XOR] = "xor",
+    [CMP] = "cmp",
+};
 
 Opcode opcodes[] = {
     // opcod  e  pattern,  format
-    { 0b100010,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   "mov" },
-    { 0b1100011,  opcode7,  IMMEDIATE_WITH_DISPLACEMENT, "mov" },
-    { 0b1011,     opcode4,  IMMEDIATE,                   "mov" },
-    { 0b001010,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   "sub" },
-    { 0b001110,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   "cmp" },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "add", 0b000 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "or",  0b001 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "adc", 0b010 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "sbb", 0b011 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "and", 0b100 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "sub", 0b101 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "xor", 0b110 },
-    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       "cmp", 0b111 },
+    { 0b100010,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   MOV },
+    { 0b1100011,  opcode7,  IMMEDIATE_WITH_DISPLACEMENT, MOV },
+    { 0b1011,     opcode4,  IMMEDIATE,                   MOV },
+    { 0b001010,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   SUB },
+    { 0b001110,   opcode6,  REG_MEM_WITH_DISPLACEMENT,   CMP },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       ADD },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       OR  },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       ADC },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       SBB },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       AND },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       SUB },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       XOR },
+    { 0b100000,   opcode6,  IMMEDIATE_TO_REGISTER,       CMP },
 };
 
 typedef struct {
@@ -176,7 +210,7 @@ b32 read_instruction(FILE *fp, InstructionData *instruction) {
                 instruction->w   = extract_pattern(b, pat_0);
                 instruction->s   = extract_pattern(b, pat_1);
                 READ;
-                if (extract_pattern(b, pat_345) == opcode.ext_opcode) {
+                if (extract_pattern(b, pat_345) == extended_code[opcode.operation]) {
                     instruction->rm  = extract_pattern(b, pat_012);
                     instruction->mod = extract_pattern(b, pat_67);
                     if (!read_displacement(fp, instruction)) return 0;
@@ -205,33 +239,33 @@ void print_instruction(InstructionData* instruction) {
     case REG_MEM_WITH_DISPLACEMENT: {
         if (instruction->mod == MEMORY_MODE_REGISTER) {
             if (instruction->d) {
-                printf("%s %s, %s\n", opcode.string, regs[instruction->reg][instruction->w], regs[instruction->rm][instruction->w]);
+                printf("%s %s, %s\n", opname[opcode.operation], regs[instruction->reg][instruction->w], regs[instruction->rm][instruction->w]);
             } else {
-                printf("%s %s, %s\n", opcode.string, regs[instruction->rm][instruction->w], regs[instruction->reg][instruction->w]);
+                printf("%s %s, %s\n", opname[opcode.operation], regs[instruction->rm][instruction->w], regs[instruction->reg][instruction->w]);
             }
         } else {
             if (instruction->d) {
                 if (instruction->disp) {
-                    printf("%s %s, [%s %+i]\n", opcode.string, regs[instruction->reg][instruction->w], rms[instruction->rm], instruction->disp);
+                    printf("%s %s, [%s %+i]\n", opname[opcode.operation], regs[instruction->reg][instruction->w], rms[instruction->rm], instruction->disp);
                 } else {
-                    printf("%s %s, [%s]\n", opcode.string, regs[instruction->reg][instruction->w], rms[instruction->rm]);
+                    printf("%s %s, [%s]\n", opname[opcode.operation], regs[instruction->reg][instruction->w], rms[instruction->rm]);
                 }
             } else {
                 if (instruction->disp) {
-                    printf("%s [%s %+i], %s\n", opcode.string, rms[instruction->rm], instruction->disp, regs[instruction->reg][instruction->w]);
+                    printf("%s [%s %+i], %s\n", opname[opcode.operation], rms[instruction->rm], instruction->disp, regs[instruction->reg][instruction->w]);
                 } else {
-                    printf("%s [%s], %s\n", opcode.string, rms[instruction->rm], regs[instruction->reg][instruction->w]);
+                    printf("%s [%s], %s\n", opname[opcode.operation], rms[instruction->rm], regs[instruction->reg][instruction->w]);
                 }
             }
         }
         break;
     }
     case IMMEDIATE: {
-        printf("%s %s, %i\n", opcode.string, regs[instruction->reg][instruction->w], (i16)instruction->data);
+        printf("%s %s, %i\n", opname[opcode.operation], regs[instruction->reg][instruction->w], (i16)instruction->data);
         break;
     }
     case IMMEDIATE_TO_REGISTER: {
-        printf("%s %s, %i\n", opcode.string, regs[instruction->reg][instruction->w], (i16)instruction->data);
+        printf("%s %s, %i\n", opname[opcode.operation], regs[instruction->reg][instruction->w], (i16)instruction->data);
         break;
     }
 
@@ -242,6 +276,64 @@ void print_instruction(InstructionData* instruction) {
     }
 }
 
+typedef struct {
+    uint16_t regs[8];
+    u8 mems[65536];
+} CPUState;
+
+void mov(CPUState* state, u32 dst_reg, uint16_t data) {
+    state->regs[dst_reg] = data;
+}
+
+void print_state(CPUState* state) {
+    for (int i = 0; i < 8; i++) {
+        printf("%4x ", state->regs[i]);
+    }
+}
+
+void simulate_instruction(InstructionData* instruction, CPUState* state) {
+    Opcode opcode = opcodes[instruction->opcode_index];
+    switch (opcode.format) {
+    case REG_MEM_WITH_DISPLACEMENT: {
+        if (instruction->mod == MEMORY_MODE_REGISTER) {
+            if (instruction->d) {
+                mov(state, instruction->reg, state->regs[instruction->rm]);
+            } else {
+                mov(state, instruction->rm, state->regs[instruction->reg]);
+            }
+        } else {
+            if (instruction->d) {
+                if (instruction->disp) {
+                    printf("%s %s, [%s %+i]\n", opname[opcode.operation], regs[instruction->reg][instruction->w], rms[instruction->rm], instruction->disp);
+                } else {
+                    printf("%s %s, [%s]\n", opname[opcode.operation], regs[instruction->reg][instruction->w], rms[instruction->rm]);
+                }
+            } else {
+                if (instruction->disp) {
+                    printf("%s [%s %+i], %s\n", opname[opcode.operation], rms[instruction->rm], instruction->disp, regs[instruction->reg][instruction->w]);
+                } else {
+                    printf("%s [%s], %s\n", opname[opcode.operation], rms[instruction->rm], regs[instruction->reg][instruction->w]);
+                }
+            }
+        }
+        break;
+    }
+    case IMMEDIATE: {
+        mov(state, instruction->reg, instruction->data);
+        break;
+    }
+    case IMMEDIATE_TO_REGISTER: {
+        mov(state, instruction->reg, instruction->data);
+        break;
+    }
+
+    default: {
+        assert(0);
+        break;
+    }
+    }
+
+}
 int main(int argc, char** argv) {
 
     if (argc != 2) return 0;
@@ -251,9 +343,12 @@ int main(int argc, char** argv) {
 
     printf("bits 16\n\n");
     
+    CPUState state;
     while (1) {
         InstructionData instruction;
         if (!read_instruction(fp, &instruction)) break;
+        print_state(&state);
+        simulate_instruction(&instruction, &state);
         print_instruction(&instruction);
     }
     return 0;
