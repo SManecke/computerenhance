@@ -9,11 +9,11 @@ typedef int16_t  i16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef uint32_t b32;
-typedef char* string_t;
+typedef char* String;
 
 #define array_length(arr_) (sizeof(arr_) / sizeof(*(arr_)))
 
-string_t regs[][2] = {
+String regs[][2] = {
     [0][0] = "al",
     [1][0] = "cl",
     [2][0] = "dl",
@@ -32,7 +32,7 @@ string_t regs[][2] = {
     [7][1] = "di",
 };
 
-string_t rms[] = { "bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx" };
+String rms[] = { "bx + si", "bx + di", "bp + si", "bp + di", "si", "di", "bp", "bx" };
 
 typedef struct {
     u32 shift;
@@ -70,8 +70,8 @@ u32 extended_code[] = {
     [OR]  = 0b001,
     [ADC] = 0b010,
     [SBB] = 0b011,
-    [SUB] = 0b100,
-    [AND] = 0b101,
+    [AND] = 0b100,
+    [SUB] = 0b101,
     [XOR] = 0b110,
     [CMP] = 0b111
 };
@@ -98,7 +98,7 @@ const BitPattern pat_67 = { 6, 2 };
 const BitPattern pat_345 = { 3, 3 };
 const BitPattern pat_012 = { 0, 3 };
 
-char *(opname[]) = {
+String opname[] = {
     [MOV] = "mov",
     [ADD] = "add",
     [OR]  = "or",
@@ -265,7 +265,7 @@ void print_instruction(InstructionData* instruction) {
         break;
     }
     case IMMEDIATE_TO_REGISTER: {
-        printf("%s %s, %i\n", opname[opcode.operation], regs[instruction->reg][instruction->w], (i16)instruction->data);
+        printf("%s %s, %i\n", opname[opcode.operation], regs[instruction->rm][instruction->w], (i16)instruction->data);
         break;
     }
 
@@ -276,19 +276,95 @@ void print_instruction(InstructionData* instruction) {
     }
 }
 
+typedef enum {
+    CF = 1 << 0,
+    PF = 1 << 1,
+    AF = 1 << 2,
+    ZF = 1 << 3,
+    SF = 1 << 4,
+    OF = 1 << 5,
+    IF = 1 << 6,
+    DF = 1 << 7,
+    TF = 1 << 8,
+    FLAG_COUNT = 9
+} Flags;
+
+char flag_names[] = {
+    'C',
+    'P',
+    'A',
+    'Z',
+    'S',
+    'O',
+    'I',
+    'D',
+    'T',
+};
+
 typedef struct {
-    uint16_t regs[8];
+    u16 regs[8];
+    Flags flags;
     u8 mems[65536];
 } CPUState;
 
-void mov(CPUState* state, u32 dst_reg, uint16_t data) {
+void mov(CPUState* state, u32 dst_reg, u16 data) {
     state->regs[dst_reg] = data;
 }
 
+u32 modify_flag(u32 a, u32 f, b32 cond) {
+    if (cond) {
+        return a | f;
+    } else {
+        return a & (~f);
+    }
+}
+
+void set_cpu_flags(CPUState* state, u16 data) {
+    Flags flags = state->flags;
+    flags = modify_flag(flags, ZF, data == 0);
+    flags = modify_flag(flags, SF, data & 0x8000);
+    flags = modify_flag(flags, PF, !(__builtin_popcount(data & 0xFF) & 1));
+    state->flags = flags;
+}
+
+void add(CPUState* state, u32 dst_reg, u16 data) {
+    state->regs[dst_reg] += data;
+    set_cpu_flags(state, state->regs[dst_reg]);
+}
+
+void sub(CPUState* state, u32 dst_reg, u16 data) {
+    state->regs[dst_reg] -= data;
+    set_cpu_flags(state, state->regs[dst_reg]);
+}
+
+void cmp(CPUState* state, u32 dst_reg, u16 data) {
+    set_cpu_flags(state, state->regs[dst_reg] - data);
+}
+
+void (*(operations[]))(CPUState* state, u32 dst_reg, u16 data) = {
+    [MOV] = mov,
+    [ADD] = add,
+    //[OR]  = or,
+    //[ADC] = adc,
+    //[SBB] = sbb,
+    [SUB] = sub,
+    //[AND] = and,
+    //[XOR] = xor,
+    [CMP] = cmp,
+};
+
 void print_state(CPUState* state) {
     for (int i = 0; i < 8; i++) {
-        printf("%4x ", state->regs[i]);
+        printf("%s=%04x ", regs[i][1], state->regs[i]);
     }
+    for (int i = 0; i < FLAG_COUNT; i++) {
+        if (state->flags & (1 << i)) {
+            printf("%c", flag_names[i]);
+        } else {
+            printf("%c", flag_names[i] + ('a' - 'A'));
+        }
+    }
+    printf(" ");
 }
 
 void simulate_instruction(InstructionData* instruction, CPUState* state) {
@@ -297,9 +373,9 @@ void simulate_instruction(InstructionData* instruction, CPUState* state) {
     case REG_MEM_WITH_DISPLACEMENT: {
         if (instruction->mod == MEMORY_MODE_REGISTER) {
             if (instruction->d) {
-                mov(state, instruction->reg, state->regs[instruction->rm]);
+                operations[opcode.operation](state, instruction->reg, state->regs[instruction->rm]);
             } else {
-                mov(state, instruction->rm, state->regs[instruction->reg]);
+                operations[opcode.operation](state, instruction->rm, state->regs[instruction->reg]);
             }
         } else {
             if (instruction->d) {
@@ -319,11 +395,11 @@ void simulate_instruction(InstructionData* instruction, CPUState* state) {
         break;
     }
     case IMMEDIATE: {
-        mov(state, instruction->reg, instruction->data);
+        operations[opcode.operation](state, instruction->reg, instruction->data);
         break;
     }
     case IMMEDIATE_TO_REGISTER: {
-        mov(state, instruction->reg, instruction->data);
+        operations[opcode.operation](state, instruction->rm, instruction->data);
         break;
     }
 
@@ -342,7 +418,7 @@ int main(int argc, char** argv) {
 
 
     printf("bits 16\n\n");
-    
+
     CPUState state;
     while (1) {
         InstructionData instruction;
@@ -351,5 +427,6 @@ int main(int argc, char** argv) {
         simulate_instruction(&instruction, &state);
         print_instruction(&instruction);
     }
+    print_state(&state); printf("\n");
     return 0;
 }
